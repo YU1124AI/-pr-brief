@@ -50,6 +50,41 @@ function extractImage(item: any): string | undefined {
   return undefined
 }
 
+async function fetchOgImage(url: string): Promise<string | undefined> {
+  if (!url) return undefined
+
+  try {
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 4000)
+
+    const res = await fetch(url, {
+      signal: controller.signal,
+      headers: {
+        'User-Agent': 'Mozilla/5.0',
+      },
+      cache: 'no-store',
+    })
+
+    clearTimeout(timeout)
+
+    if (!res.ok) return undefined
+
+    const html = await res.text()
+
+    const ogMatch =
+      html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i) ||
+      html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i) ||
+      html.match(/<meta[^>]+name=["']twitter:image["'][^>]+content=["']([^"']+)["']/i) ||
+      html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+name=["']twitter:image["']/i)
+
+    if (!ogMatch?.[1]) return undefined
+
+    return new URL(ogMatch[1], url).toString()
+  } catch {
+    return undefined
+  }
+}
+
 function relativeTime(dateStr: string): string {
   const d = new Date(dateStr)
   if (isNaN(d.getTime())) return ''
@@ -72,21 +107,25 @@ const PLACEHOLDER: Record<string, string> = {
   'Yahoo!ニュース': 'https://s.yimg.jp/images/top/ogp/fb_y_1500x1500.png',
   '朝日新聞': 'https://www.asahi.com/assets/templates/common/images/asahicom-ogpimage.png',
   'Web担当者Forum': 'https://webtan.impress.co.jp/sites/default/files/images/webtan-ogp.png',
-  'MarkeZine': 'https://markezine.jp/static/common/img/ogp.png',
-  'AdverTimes': 'https://www.advertimes.com/wp-content/themes/advertimes/assets/images/ogp.png',
+  MarkeZine: 'https://markezine.jp/static/common/img/ogp.png',
+  AdverTimes: 'https://www.advertimes.com/wp-content/themes/advertimes/assets/images/ogp.png',
 }
 
-function mapFeedItem(
+async function mapFeedItem(
   item: any,
   source: string,
   tag: FeedItem['tag']
-): FeedItem {
+): Promise<FeedItem> {
+  const link = item.link || ''
+  const rssImage = extractImage(item)
+  const ogImage = rssImage ? undefined : await fetchOgImage(link)
+
   return {
     title: item.title || '',
-    link: item.link || '',
+    link,
     pubDate: relativeTime(item.pubDate || item.isoDate || ''),
     summary: cleanText(item.contentSnippet || item.summary || item.content || '').slice(0, 90),
-    imageUrl: extractImage(item) || PLACEHOLDER[source],
+    imageUrl: rssImage || ogImage || PLACEHOLDER[source],
     source,
     tag,
   }
@@ -95,9 +134,8 @@ function mapFeedItem(
 export async function fetchPRTimes(limit = 6): Promise<FeedItem[]> {
   try {
     const feed = await parser.parseURL('https://prtimes.jp/index.rdf')
-    return (feed.items || [])
-      .slice(0, limit)
-      .map((item: any) => mapFeedItem(item, 'PR TIMES', 'pr'))
+    const items = (feed.items || []).slice(0, limit)
+    return await Promise.all(items.map((item: any) => mapFeedItem(item, 'PR TIMES', 'pr')))
   } catch {
     return []
   }
@@ -106,9 +144,8 @@ export async function fetchPRTimes(limit = 6): Promise<FeedItem[]> {
 export async function fetchPREdge(limit = 6): Promise<FeedItem[]> {
   try {
     const feed = await parser.parseURL('https://predge.jp/feed/')
-    return (feed.items || [])
-      .slice(0, limit)
-      .map((item: any) => mapFeedItem(item, 'PR EDGE', 'ad'))
+    const items = (feed.items || []).slice(0, limit)
+    return await Promise.all(items.map((item: any) => mapFeedItem(item, 'PR EDGE', 'ad')))
   } catch {
     return []
   }
@@ -117,9 +154,8 @@ export async function fetchPREdge(limit = 6): Promise<FeedItem[]> {
 export async function fetchWebTan(limit = 6): Promise<FeedItem[]> {
   try {
     const feed = await parser.parseURL('https://webtan.impress.co.jp/rss.xml')
-    return (feed.items || [])
-      .slice(0, limit)
-      .map((item: any) => mapFeedItem(item, 'Web担当者Forum', 'ad'))
+    const items = (feed.items || []).slice(0, limit)
+    return await Promise.all(items.map((item: any) => mapFeedItem(item, 'Web担当者Forum', 'ad')))
   } catch {
     return []
   }
@@ -128,9 +164,8 @@ export async function fetchWebTan(limit = 6): Promise<FeedItem[]> {
 export async function fetchMarkeZine(limit = 6): Promise<FeedItem[]> {
   try {
     const feed = await parser.parseURL('https://markezine.jp/rss/new/20/index.xml')
-    return (feed.items || [])
-      .slice(0, limit)
-      .map((item: any) => mapFeedItem(item, 'MarkeZine', 'ad'))
+    const items = (feed.items || []).slice(0, limit)
+    return await Promise.all(items.map((item: any) => mapFeedItem(item, 'MarkeZine', 'ad')))
   } catch {
     return []
   }
@@ -139,9 +174,8 @@ export async function fetchMarkeZine(limit = 6): Promise<FeedItem[]> {
 export async function fetchAdverTimes(limit = 6): Promise<FeedItem[]> {
   try {
     const feed = await parser.parseURL('https://www.advertimes.com/feed/')
-    return (feed.items || [])
-      .slice(0, limit)
-      .map((item: any) => mapFeedItem(item, 'AdverTimes', 'ad'))
+    const items = (feed.items || []).slice(0, limit)
+    return await Promise.all(items.map((item: any) => mapFeedItem(item, 'AdverTimes', 'ad')))
   } catch {
     return []
   }
@@ -157,25 +191,19 @@ export async function fetchYahooNews(limit = 8): Promise<FeedItem[]> {
     ]
 
     const results = await Promise.allSettled(urls.map((u) => parser.parseURL(u)))
-    const items: FeedItem[] = []
+    const rawItems: any[] = []
 
     for (const r of results) {
       if (r.status === 'fulfilled') {
-        for (const item of (r.value.items || []).slice(0, 3)) {
-          items.push({
-            title: (item as any).title || '',
-            link: (item as any).link || '',
-            pubDate: relativeTime((item as any).pubDate || ''),
-            summary: cleanText((item as any).contentSnippet || '').slice(0, 90),
-            imageUrl: PLACEHOLDER['Yahoo!ニュース'],
-            source: 'Yahoo!ニュース',
-            tag: 'news',
-          })
-        }
+        rawItems.push(...(r.value.items || []).slice(0, 3))
       }
     }
 
-    return items.slice(0, limit)
+    const items = rawItems.slice(0, limit)
+
+    return await Promise.all(
+      items.map((item: any) => mapFeedItem(item, 'Yahoo!ニュース', 'news'))
+    )
   } catch {
     return []
   }
@@ -184,9 +212,8 @@ export async function fetchYahooNews(limit = 8): Promise<FeedItem[]> {
 export async function fetchAsahi(limit = 4): Promise<FeedItem[]> {
   try {
     const feed = await parser.parseURL('https://www.asahi.com/rss/asahi/newsheadlines.rdf')
-    return (feed.items || [])
-      .slice(0, limit)
-      .map((item: any) => mapFeedItem(item, '朝日新聞', 'news'))
+    const items = (feed.items || []).slice(0, limit)
+    return await Promise.all(items.map((item: any) => mapFeedItem(item, '朝日新聞', 'news')))
   } catch {
     return []
   }
@@ -221,20 +248,6 @@ export async function fetchXTrends(
       }
 
       if (trends.length > 0) break
-    }
-
-    if (trends.length === 0 && items.length > 0) {
-      const content = (items[0] as any).content || ''
-      const liMatches = [...content.matchAll(/<li[^>]*>([^<]{1,60})<\/li>/g)]
-
-      liMatches.slice(0, limit).forEach((m, i) => {
-        const term = m[1]
-          .replace(/&amp;/g, '&')
-          .replace(/&#\d+;/g, '')
-          .trim()
-
-        if (term) trends.push({ rank: i + 1, term })
-      })
     }
 
     return trends
@@ -311,108 +324,6 @@ export const IDEAS_BANK: Record<number, { t: string; d: string; k: string }[]> =
       t: '「AIに伝わらないこと」収集プロジェクト',
       d: '生活者からAIに伝わらない感情・体験を募集し書籍化。人間らしさを再定義するブランドメッセージに。',
       k: '構造：課題収集→コンテンツ化→出版PR',
-    },
-  ],
-  2: [
-    {
-      t: '課題を「遊び場」にする',
-      d: 'ゴミ拾いをゲーム化し、参加者数がリアルタイムでOOHに表示される仕掛け。行動→可視化→拡散の三段設計。',
-      k: 'エンタメ化：行動変容のゲーミフィケーション',
-    },
-    {
-      t: '社会課題をアーティストに翻訳させる',
-      d: '3テーマを3組のアーティストが作品化。企業は「場」だけを提供し、メッセージは作品が語る。',
-      k: '仕掛け：企業の透明化×アート×共感設計',
-    },
-    {
-      t: '失敗白書PR',
-      d: '社会課題解決に失敗した取り組みを正直に公開。誠実さが信頼獲得とメディア露出を生む。',
-      k: '逆張り：失敗の開示が最大の信頼資産になる',
-    },
-  ],
-  3: [
-    {
-      t: 'リアル店舗を「記憶の劇場」に',
-      d: 'QRを読むと棚の商品に紐づく誰かのエピソードが流れるアプリ。購買体験を情緒的物語に変換する。',
-      k: '構造：デジタル文脈×リアル体験×感情接続',
-    },
-    {
-      t: '行動の「開始点」だけをデジタルで設計',
-      d: 'アプリがゴールを提示し、達成はリアル店舗で体験する設計。デジタルとリアルの役割を明確に分けた融合体験。',
-      k: '設計：デジタル＝起点、リアル＝完結の役割分担',
-    },
-    {
-      t: '街がキャンバスになるAR体験',
-      d: '特定エリアでスマホを向けると社会課題に紐づくビジュアルが出現。体験投稿が情報拡散の主体になる。',
-      k: '仕掛け：AR×OOH×UGC拡散の連鎖設計',
-    },
-  ],
-  4: [
-    {
-      t: 'ナノインフルエンサーを「取材記者」にする',
-      d: 'フォロワー1000人以下の生活者に「ブランド記者証」を与え工場・研究所に招待。リアルな発信が信頼を生む。',
-      k: '逆転：マイクロ化×誠実さ×信頼経済の三位一体',
-    },
-    {
-      t: 'コミュニティから先に作る新商品開発',
-      d: 'コアファン100人と3ヶ月かけて商品を共同開発し、発売前から熱量を醸成。',
-      k: '構造：共創→関係→発売→拡散の四段フロー',
-    },
-    {
-      t: '「バズを禁止する」PR宣言',
-      d: '一切バズを狙わない、口コミだけで広げるキャンペーンを宣言。その宣言自体がバズを生む逆説設計。',
-      k: '逆張り：制約×逆説×メタPRの構造',
-    },
-  ],
-  5: [
-    {
-      t: '「発言しない理由」を先に公開する',
-      d: '社会課題について発言しない理由を透明に開示した上で、どんな条件なら発言するかを宣言するPR。',
-      k: '逆張り：沈黙の開示が信頼を生む構造',
-    },
-    {
-      t: 'ブランドの「炎上仮説書」',
-      d: '炎上しうるシナリオをあえて公開し、リスクと向き合う姿勢をコンテンツにする。',
-      k: '透明化：想定リスクの可視化が強さに転換',
-    },
-    {
-      t: '社員の「迷い」をドキュメントする',
-      d: '社内で議論する過程をドキュメンタリー公開。「迷いながら向き合う姿」が生活者共感を獲得。',
-      k: '構造：プロセス公開×共感×誠実さの連鎖',
-    },
-  ],
-  6: [
-    {
-      t: 'ローカルの「語感」で世界に届ける',
-      d: '日本語のオノマトペを翻訳不能なまま世界発信。翻訳の不完全さが独自性になる逆説。',
-      k: '逆転：翻訳できないことが最大の強さになる',
-    },
-    {
-      t: '地元の「当たり前」を外国人が驚く動画PR',
-      d: 'インバウンド旅行者の反応動画を収集し、地域の「見えていた価値」を可視化。',
-      k: '構造：他者視点×発見×拡散の三段設計',
-    },
-    {
-      t: '地方産品に「産地の時間軸」を付ける',
-      d: '商品と一緒に地域タイムラインを届けるパッケージPR。物語が差別化になる。',
-      k: '核心：時間×文化文脈×感情価値の融合',
-    },
-  ],
-  7: [
-    {
-      t: '「ゆる継続」を可視化するブランドPR',
-      d: '毎日少しずつ続ける行動をアプリで記録し1年後の変化を自動生成レポートに。',
-      k: '構造：行動変容の見える化×長期関係性の構築',
-    },
-    {
-      t: 'ウェルビーイングを「共通言語」にする',
-      d: '企業横断のウェルビーイング白書を複数ブランドが共同発表。単独より大きなメディア露出を獲得。',
-      k: '仕掛け：競合協調×業界PR×権威性の三角形',
-    },
-    {
-      t: '「今日の小さな幸せ」収集キャンペーン',
-      d: '生活者から「小さな幸福体験」を毎日収集しデータを可視化して発表。ブランドは背景にいながら社会的発信者になる。',
-      k: '設計：データ蓄積→コンテンツ化→ブランド想起',
     },
   ],
 }
