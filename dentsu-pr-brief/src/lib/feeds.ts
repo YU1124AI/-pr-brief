@@ -127,7 +127,7 @@ export async function fetchWebTan(limit = 6): Promise<FeedItem[]> {
 
 export async function fetchMarkeZine(limit = 6): Promise<FeedItem[]> {
   try {
-    const feed = await parser.parseURL('https://markezine.jp/rss/index.rdf')
+    const feed = await parser.parseURL('https://markezine.jp/rss/new/20/index.xml')
     return (feed.items || [])
       .slice(0, limit)
       .map((item: any) => mapFeedItem(item, 'MarkeZine', 'ad'))
@@ -416,4 +416,3 @@ export const IDEAS_BANK: Record<number, { t: string; d: string; k: string }[]> =
     },
   ],
 }
-
