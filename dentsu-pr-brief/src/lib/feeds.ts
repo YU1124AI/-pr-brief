@@ -42,11 +42,12 @@ function relativeTime(dateStr: string): string {
 }
 
 const PLACEHOLDER: Record<string, string> = {
-  'PR TIMES':     'https://prtimes.jp/img/common/prtimes_ogp.png',
-  'PR EDGE':      'https://predge.jp/wp-content/themes/prtimesmedia-theme/assets/img/meta/og_image.png',
+  'PR TIMES':   'https://prtimes.jp/img/common/prtimes_ogp.png',
+  'PR EDGE':    'https://predge.jp/wp-content/themes/prtimesmedia-theme/assets/img/meta/og_image.png',
   'Yahoo!ニュース': 'https://s.yimg.jp/images/top/ogp/fb_y_1500x1500.png',
-  '朝日新聞':       'https://www.asahi.com/assets/templates/common/images/asahicom-ogpimage.png',
-  '宣伝会議':       'https://www.sendenkaigi.com/wp-content/uploads/2020/04/ogp_default.jpg',
+  '朝日新聞':     'https://www.asahi.com/assets/templates/common/images/asahicom-ogpimage.png',
+  '宣伝会議':     'https://www.sendenkaigi.com/wp-content/uploads/2020/04/ogp_default.jpg',
+  '広報会議':     'https://www.sendenkaigi.com/wp-content/uploads/2020/04/ogp_default.jpg',
 }
 
 export async function fetchPRTimes(limit = 6): Promise<FeedItem[]> {
@@ -97,7 +98,7 @@ export async function fetchYahooNews(limit = 8): Promise<FeedItem[]> {
             link: (item as any).link || '',
             pubDate: relativeTime((item as any).pubDate || ''),
             summary: ((item as any).contentSnippet || '').slice(0, 90),
-            imageUrl: extractImage(item) || PLACEHOLDER['Yahoo!ニュース'],
+            imageUrl: PLACEHOLDER['Yahoo!ニュース'],
             source: 'Yahoo!ニュース',
             tag: 'news' as const,
           })
@@ -123,18 +124,31 @@ export async function fetchAsahi(limit = 4): Promise<FeedItem[]> {
   } catch { return [] }
 }
 
-export async function fetchSendenKaigi(limit = 4): Promise<FeedItem[]> {
+export async function fetchSendenKaigi(limit = 6): Promise<FeedItem[]> {
   try {
-    const feed = await parser.parseURL('https://www.sendenkaigi.com/feed/')
-    return (feed.items || []).slice(0, limit).map((item: any) => ({
-      title: item.title || '',
-      link: item.link || '',
-      pubDate: relativeTime(item.pubDate || ''),
-      summary: (item.contentSnippet || item.summary || '').replace(/<[^>]+>/g,'').slice(0, 90),
-      imageUrl: extractImage(item) || PLACEHOLDER['宣伝会議'],
-      source: '宣伝会議',
-      tag: 'ad' as const,
-    }))
+    const urls = [
+      'https://www.sendenkaigi.com/marketing/media/sendenkaigi/feed/',
+      'https://www.sendenkaigi.com/marketing/media/kouhoukaigi/feed/',
+    ]
+    const results = await Promise.allSettled(urls.map(u => parser.parseURL(u)))
+    const items: FeedItem[] = []
+    for (const r of results) {
+      if (r.status === 'fulfilled') {
+        for (const item of (r.value.items || []).slice(0, 3)) {
+          const src = ((item as any).link || '').includes('kouhoukaigi') ? '広報会議' : '宣伝会議'
+          items.push({
+            title: (item as any).title || '',
+            link: (item as any).link || '',
+            pubDate: relativeTime((item as any).pubDate || ''),
+            summary: ((item as any).contentSnippet || '').replace(/<[^>]+>/g,'').slice(0, 90),
+            imageUrl: extractImage(item) || PLACEHOLDER[src],
+            source: src,
+            tag: 'ad' as const,
+          })
+        }
+      }
+    }
+    return items.slice(0, limit)
   } catch { return [] }
 }
 
