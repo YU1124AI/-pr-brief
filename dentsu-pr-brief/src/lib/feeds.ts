@@ -24,8 +24,9 @@ function extractImage(item: any): string | undefined {
   if (item.mediaContent?.$.url) return item.mediaContent.$.url
   if (item.mediaThumbnail?.$.url) return item.mediaThumbnail.$.url
   if (item.enclosure?.url && item.enclosure.type?.startsWith('image')) return item.enclosure.url
-  const match = (item.content || item['content:encoded'] || item.summary || '').match(/<img[^>]+src=["']([^"']+)["']/)
-  if (match) return match[1]
+  const html = item['content:encoded'] || item.content || item.summary || ''
+  const m = html.match(/<img[^>]+src=["']([^"']+)["']/)
+  if (m) return m[1]
   return undefined
 }
 
@@ -40,7 +41,14 @@ function relativeTime(dateStr: string): string {
   return `${Math.floor(h / 24)}日前`
 }
 
-// PR TIMES — public RSS (no auth required)
+const PLACEHOLDER: Record<string, string> = {
+  'PR TIMES':     'https://prtimes.jp/img/common/prtimes_ogp.png',
+  'PR EDGE':      'https://predge.jp/wp-content/themes/prtimesmedia-theme/assets/img/meta/og_image.png',
+  'Yahoo!ニュース': 'https://s.yimg.jp/images/top/ogp/fb_y_1500x1500.png',
+  '朝日新聞':       'https://www.asahi.com/assets/templates/common/images/asahicom-ogpimage.png',
+  '宣伝会議':       'https://www.sendenkaigi.com/wp-content/uploads/2020/04/ogp_default.jpg',
+}
+
 export async function fetchPRTimes(limit = 6): Promise<FeedItem[]> {
   try {
     const feed = await parser.parseURL('https://prtimes.jp/index.rdf')
@@ -48,17 +56,14 @@ export async function fetchPRTimes(limit = 6): Promise<FeedItem[]> {
       title: item.title || '',
       link: item.link || '',
       pubDate: relativeTime(item.pubDate || ''),
-      summary: (item.contentSnippet || item.summary || '').slice(0, 80),
-      imageUrl: extractImage(item),
+      summary: (item.contentSnippet || item.summary || '').replace(/<[^>]+>/g,'').slice(0, 90),
+      imageUrl: extractImage(item) || PLACEHOLDER['PR TIMES'],
       source: 'PR TIMES',
-      tag: 'pr',
+      tag: 'pr' as const,
     }))
-  } catch {
-    return []
-  }
+  } catch { return [] }
 }
 
-// PR EDGE (predge.jp) — WordPress RSS
 export async function fetchPREdge(limit = 5): Promise<FeedItem[]> {
   try {
     const feed = await parser.parseURL('https://predge.jp/feed/')
@@ -66,49 +71,74 @@ export async function fetchPREdge(limit = 5): Promise<FeedItem[]> {
       title: item.title || '',
       link: item.link || '',
       pubDate: relativeTime(item.pubDate || ''),
-      summary: (item.contentSnippet || item.summary || '').replace(/<[^>]+>/g, '').slice(0, 80),
-      imageUrl: extractImage(item),
+      summary: (item.contentSnippet || item.summary || '').replace(/<[^>]+>/g,'').slice(0, 90),
+      imageUrl: extractImage(item) || PLACEHOLDER['PR EDGE'],
       source: 'PR EDGE',
-      tag: 'ad',
+      tag: 'ad' as const,
     }))
-  } catch {
-    return []
-  }
+  } catch { return [] }
 }
 
-// Yahoo! News RSS (Japan) — various categories
-export async function fetchYahooNews(limit = 6): Promise<FeedItem[]> {
+export async function fetchYahooNews(limit = 8): Promise<FeedItem[]> {
   try {
     const urls = [
       'https://news.yahoo.co.jp/rss/topics/top-picks.xml',
       'https://news.yahoo.co.jp/rss/topics/business.xml',
+      'https://news.yahoo.co.jp/rss/topics/economy.xml',
+      'https://news.yahoo.co.jp/rss/topics/entertainment.xml',
     ]
     const results = await Promise.allSettled(urls.map(u => parser.parseURL(u)))
     const items: FeedItem[] = []
     for (const r of results) {
       if (r.status === 'fulfilled') {
-        for (const item of (r.value.items || []).slice(0, 4)) {
+        for (const item of (r.value.items || []).slice(0, 3)) {
           items.push({
             title: (item as any).title || '',
             link: (item as any).link || '',
             pubDate: relativeTime((item as any).pubDate || ''),
-            summary: ((item as any).contentSnippet || '').slice(0, 80),
-            imageUrl: extractImage(item),
+            summary: ((item as any).contentSnippet || '').slice(0, 90),
+            imageUrl: extractImage(item) || PLACEHOLDER['Yahoo!ニュース'],
             source: 'Yahoo!ニュース',
-            tag: 'news',
+            tag: 'news' as const,
           })
         }
       }
     }
     return items.slice(0, limit)
-  } catch {
-    return []
-  }
+  } catch { return [] }
 }
 
-// X (Twitter) Trends — via Trends24 RSS proxy
-// Note: Official X API v2 requires bearer token. We use trends24.in RSS as public proxy.
-export async function fetchXTrends(limit = 10): Promise<{ rank: number; term: string; volume?: string }[]> {
+export async function fetchAsahi(limit = 4): Promise<FeedItem[]> {
+  try {
+    const feed = await parser.parseURL('https://www.asahi.com/rss/asahi/newsheadlines.rdf')
+    return (feed.items || []).slice(0, limit).map((item: any) => ({
+      title: item.title || '',
+      link: item.link || '',
+      pubDate: relativeTime(item.pubDate || ''),
+      summary: (item.contentSnippet || item.summary || '').replace(/<[^>]+>/g,'').slice(0, 90),
+      imageUrl: extractImage(item) || PLACEHOLDER['朝日新聞'],
+      source: '朝日新聞',
+      tag: 'news' as const,
+    }))
+  } catch { return [] }
+}
+
+export async function fetchSendenKaigi(limit = 4): Promise<FeedItem[]> {
+  try {
+    const feed = await parser.parseURL('https://www.sendenkaigi.com/feed/')
+    return (feed.items || []).slice(0, limit).map((item: any) => ({
+      title: item.title || '',
+      link: item.link || '',
+      pubDate: relativeTime(item.pubDate || ''),
+      summary: (item.contentSnippet || item.summary || '').replace(/<[^>]+>/g,'').slice(0, 90),
+      imageUrl: extractImage(item) || PLACEHOLDER['宣伝会議'],
+      source: '宣伝会議',
+      tag: 'ad' as const,
+    }))
+  } catch { return [] }
+}
+
+export async function fetchXTrends(limit = 15): Promise<{ rank: number; term: string; volume?: string }[]> {
   try {
     const feed = await parser.parseURL('https://trends24.in/japan/feed/')
     const items = (feed.items || []).slice(0, 2)
@@ -128,7 +158,6 @@ export async function fetchXTrends(limit = 10): Promise<{ rank: number; term: st
       }
       if (trends.length > 0) break
     }
-    // Fallback: parse ol/li from content
     if (trends.length === 0 && items.length > 0) {
       const content = (items[0] as any).content || ''
       const liMatches = [...content.matchAll(/<li[^>]*>([^<]{1,60})<\/li>/g)]
@@ -138,38 +167,35 @@ export async function fetchXTrends(limit = 10): Promise<{ rank: number; term: st
       })
     }
     return trends
-  } catch {
-    return []
-  }
+  } catch { return [] }
 }
 
-// Weekly themes rotation
 export const WEEKLY_THEMES = [
   { theme: 'Z世代の「推し消費」とブランド人格化', desc: '応援・共感消費が加速するZ世代。ブランドが"人格"を持つとき何が起きるか？' },
   { theme: '生成AI × 生活者体験の再設計', desc: 'AIが日常に溶け込む今、生活者の「体験」はどう変わるか？人間らしさを再定義するPR戦略。' },
   { theme: '社会課題をエンターテインメントにする', desc: 'SDGs疲れを越えて「楽しみながら行動変容」を促す。Cannes型の社会課題×クリエイティブの構造。' },
   { theme: 'リアル × デジタルの融合体験設計', desc: 'OMO時代の体験型PR。リアルとデジタルを橋渡しするキャンペーン設計の核心。' },
   { theme: 'インフルエンサー経済の次を読む', desc: '信頼経済・コミュニティ型影響力の時代に、PRはどう生活者に届けるか？' },
-  { theme: 'ブランドの「沈黙」と「発言」を選ぶ基準', desc: '企業がいつ声を上げ、いつ沈黙すべきか？電通PRが設計するリスクコミュニケーション。' },
+  { theme: 'ブランドの「沈黙」と「発言」を選ぶ基準', desc: '企業がいつ声を上げ、いつ沈黙すべきか？リスクコミュニケーションの設計思想。' },
   { theme: 'ローカルブランドの世界進出戦略', desc: '日本のローカルカルチャーが世界に刺さる「文脈」のつくり方。地域資産を武器にした海外PR。' },
   { theme: 'ウェルビーイングと消費行動の新関係', desc: '「豊かさの再定義」を起点にしたPRブランディング。健康・幸福感への意識が消費を変える。' },
 ]
 
 export const IDEAS_BANK: Record<number, { t: string; d: string; k: string }[]> = {
   0: [
-    { t: '#拒絶から推しへ', d: 'ブランドを一度否定した人が熱狂的なファンになる過程を本人がドキュメントするUGCキャンペーン。「なぜ嫌いだったか」の告白が共感を呼ぶ。', k: 'インサイト：反転型感情の強度×SNS拡散構造' },
-    { t: '共同制作型ブランドブック', d: 'Z世代10名とブランドの未来を共同執筆。制作過程をライブ配信し、最終版を書店で販売。ファン化と信頼形成を同時に実現。', k: '仕掛け：参加×物語×リアル接点の三重構造' },
-    { t: '「推し活費」可視化ツールPR', d: '年間推し消費額を可視化するウェブアプリを提供し「これだけ好きだった」感情を数値化。メディア露出とブランド親和性を同時獲得。', k: '構造：データ×感情×シェア動機の連鎖' },
+    { t: '#拒絶から推しへ', d: 'ブランドを一度否定した人が熱狂的なファンになる過程を本人がドキュメントするUGCキャンペーン。', k: 'インサイト：反転型感情の強度×SNS拡散構造' },
+    { t: '共同制作型ブランドブック', d: 'Z世代10名とブランドの未来を共同執筆。制作過程をライブ配信し、最終版を書店で販売。', k: '仕掛け：参加×物語×リアル接点の三重構造' },
+    { t: '「推し活費」可視化ツールPR', d: '年間推し消費額を可視化するウェブアプリを提供し感情を数値化。メディア露出とブランド親和性を同時獲得。', k: '構造：データ×感情×シェア動機の連鎖' },
   ],
   1: [
-    { t: 'AIが「私だけの体験」を設計する', d: '生活者の行動データからAIがパーソナライズドイベントを提案。「自分のために作られた」感覚が話題とロイヤリティを生む。', k: '核心：AIパーソナル化×驚き体験の設計' },
-    { t: 'AIの判断を人間が添削するキャンペーン', d: 'ブランドのAI推薦に「人間の感性」で反論できるSNS企画。面白さがバイラルを生み、ブランドの透明性をPRする。', k: '逆張り：AI×人間の緊張感をコンテンツ化' },
-    { t: '「AIに伝わらないこと」収集プロジェクト', d: '生活者からAIに伝わらない感情・体験を募集し書籍化。人間らしさを再定義するブランドメッセージとして展開。', k: '構造：課題収集→コンテンツ化→出版PR' },
+    { t: 'AIが「私だけの体験」を設計する', d: '生活者の行動データからAIがパーソナライズドイベントを提案。「自分のために作られた」感覚が話題を生む。', k: '核心：AIパーソナル化×驚き体験の設計' },
+    { t: 'AIの判断を人間が添削するキャンペーン', d: 'ブランドのAI推薦に「人間の感性」で反論できるSNS企画。面白さがバイラルを生む。', k: '逆張り：AI×人間の緊張感をコンテンツ化' },
+    { t: '「AIに伝わらないこと」収集プロジェクト', d: '生活者からAIに伝わらない感情・体験を募集し書籍化。人間らしさを再定義するブランドメッセージに。', k: '構造：課題収集→コンテンツ化→出版PR' },
   ],
   2: [
     { t: '課題を「遊び場」にする', d: 'ゴミ拾いをゲーム化し、参加者数がリアルタイムでOOHに表示される仕掛け。行動→可視化→拡散の三段設計。', k: 'エンタメ化：行動変容のゲーミフィケーション' },
-    { t: '社会課題をアーティストに翻訳させる', d: '気候変動・孤独・貧困の3テーマを3組のアーティストが作品化。企業は「場」だけを提供し、メッセージは作品が語る。', k: '仕掛け：企業の透明化×アート×共感設計' },
-    { t: '失敗白書PR', d: '企業がこれまで社会課題解決に失敗した取り組みを正直に公開するレポートを発表。誠実さが信頼獲得とメディア露出を生む。', k: '逆張り：失敗の開示が最大の信頼資産になる' },
+    { t: '社会課題をアーティストに翻訳させる', d: '3テーマを3組のアーティストが作品化。企業は「場」だけを提供し、メッセージは作品が語る。', k: '仕掛け：企業の透明化×アート×共感設計' },
+    { t: '失敗白書PR', d: '社会課題解決に失敗した取り組みを正直に公開。誠実さが信頼獲得とメディア露出を生む。', k: '逆張り：失敗の開示が最大の信頼資産になる' },
   ],
   3: [
     { t: 'リアル店舗を「記憶の劇場」に', d: 'QRを読むと棚の商品に紐づく誰かのエピソードが流れるアプリ。購買体験を情緒的物語に変換する。', k: '構造：デジタル文脈×リアル体験×感情接続' },
@@ -178,22 +204,22 @@ export const IDEAS_BANK: Record<number, { t: string; d: string; k: string }[]> =
   ],
   4: [
     { t: 'ナノインフルエンサーを「取材記者」にする', d: 'フォロワー1000人以下の生活者に「ブランド記者証」を与え工場・研究所に招待。リアルな発信が信頼を生む。', k: '逆転：マイクロ化×誠実さ×信頼経済の三位一体' },
-    { t: 'コミュニティから先に作る新商品開発', d: 'コアファン100人と3ヶ月かけて商品を共同開発し、発売前から熱量を醸成。インフルエンサーより深い関係設計。', k: '構造：共創→関係→発売→拡散の四段フロー' },
-    { t: '「バズを禁止する」PR宣言', d: '一切バズを狙わない、口コミだけで広げるキャンペーンを宣言しリリース。その宣言自体がバズを生む逆説設計。', k: '逆張り：制約×逆説×メタPRの構造' },
+    { t: 'コミュニティから先に作る新商品開発', d: 'コアファン100人と3ヶ月かけて商品を共同開発し、発売前から熱量を醸成。', k: '構造：共創→関係→発売→拡散の四段フロー' },
+    { t: '「バズを禁止する」PR宣言', d: '一切バズを狙わない、口コミだけで広げるキャンペーンを宣言。その宣言自体がバズを生む逆説設計。', k: '逆張り：制約×逆説×メタPRの構造' },
   ],
   5: [
-    { t: '「発言しない理由」を先に公開する', d: '社会課題について企業が発言しない理由を透明に開示した上で、どんな条件なら発言するかを宣言するPR。誠実さが資産になる。', k: '逆張り：沈黙の開示が信頼を生む構造' },
-    { t: 'ブランドの「炎上仮説書」', d: '炎上しうるシナリオをあえて公開し、リスクと向き合う姿勢をコンテンツにする。危機管理の先手を取ったPR。', k: '透明化：想定リスクの可視化が強さに転換' },
-    { t: '社員の「迷い」をドキュメントする', d: '企業が社会課題について社内で議論する過程をドキュメンタリー公開。「迷いながら向き合う姿」が生活者共感を獲得。', k: '構造：プロセス公開×共感×誠実さの連鎖' },
+    { t: '「発言しない理由」を先に公開する', d: '社会課題について発言しない理由を透明に開示した上で、どんな条件なら発言するかを宣言するPR。', k: '逆張り：沈黙の開示が信頼を生む構造' },
+    { t: 'ブランドの「炎上仮説書」', d: '炎上しうるシナリオをあえて公開し、リスクと向き合う姿勢をコンテンツにする。', k: '透明化：想定リスクの可視化が強さに転換' },
+    { t: '社員の「迷い」をドキュメントする', d: '社内で議論する過程をドキュメンタリー公開。「迷いながら向き合う姿」が生活者共感を獲得。', k: '構造：プロセス公開×共感×誠実さの連鎖' },
   ],
   6: [
-    { t: 'ローカルの「語感」で世界に届ける', d: '日本語のオノマトペ（もちもち・ほっこり等）を翻訳不能なまま世界発信。翻訳の不完全さが独自性になる逆説。', k: '逆転：翻訳できないことが最大の強さになる' },
-    { t: '地元の「当たり前」を外国人が驚く動画PR', d: 'インバウンド旅行者の反応動画を収集し、地域の「見えていた価値」を可視化。地域ブランディング×観光PRの好例。', k: '構造：他者視点×発見×拡散の三段設計' },
-    { t: '地方産品に「産地の時間軸」を付ける', d: '商品と一緒に「この地で100年続いてきた○○」という地域タイムラインを届けるパッケージPR。物語が差別化になる。', k: '核心：時間×文化文脈×感情価値の融合' },
+    { t: 'ローカルの「語感」で世界に届ける', d: '日本語のオノマトペを翻訳不能なまま世界発信。翻訳の不完全さが独自性になる逆説。', k: '逆転：翻訳できないことが最大の強さになる' },
+    { t: '地元の「当たり前」を外国人が驚く動画PR', d: 'インバウンド旅行者の反応動画を収集し、地域の「見えていた価値」を可視化。', k: '構造：他者視点×発見×拡散の三段設計' },
+    { t: '地方産品に「産地の時間軸」を付ける', d: '商品と一緒に地域タイムラインを届けるパッケージPR。物語が差別化になる。', k: '核心：時間×文化文脈×感情価値の融合' },
   ],
   7: [
-    { t: '「ゆる継続」を可視化するブランドPR', d: '毎日少しずつ続ける行動をアプリで記録し1年後の変化を自動生成レポートに。継続の価値をブランドが証明する。', k: '構造：行動変容の見える化×長期関係性の構築' },
-    { t: 'ウェルビーイングを「共通言語」にする', d: '企業横断のウェルビーイング白書を複数ブランドが共同発表。業界課題共有で単独より大きなメディア露出を獲得。', k: '仕掛け：競合協調×業界PR×権威性の三角形' },
+    { t: '「ゆる継続」を可視化するブランドPR', d: '毎日少しずつ続ける行動をアプリで記録し1年後の変化を自動生成レポートに。', k: '構造：行動変容の見える化×長期関係性の構築' },
+    { t: 'ウェルビーイングを「共通言語」にする', d: '企業横断のウェルビーイング白書を複数ブランドが共同発表。単独より大きなメディア露出を獲得。', k: '仕掛け：競合協調×業界PR×権威性の三角形' },
     { t: '「今日の小さな幸せ」収集キャンペーン', d: '生活者から「小さな幸福体験」を毎日収集しデータを可視化して発表。ブランドは背景にいながら社会的発信者になる。', k: '設計：データ蓄積→コンテンツ化→ブランド想起' },
   ],
 }
